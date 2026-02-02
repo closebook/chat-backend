@@ -43,7 +43,6 @@ const fileUploadLabel = document.getElementById('file-upload-label');
 document.body.insertAdjacentHTML('afterbegin', '<div id="notification-container"></div>');
 const notificationContainer = document.getElementById('notification-container');
 
-
 document.getElementById('show-rules-btn')?.addEventListener('click', () => {
     rulesPopup.style.display = 'flex';
 });
@@ -61,6 +60,88 @@ let suggestionsVisible = false;
 let replyingTo = null;
 let messages = [];
 
+// Username modal
+let usernameModal = null;
+
+// Create username modal if it doesn't exist
+function createUsernameModal() {
+    if (document.getElementById('username-modal')) return;
+    
+    const modalHTML = `
+        <div id="username-modal" class="popup-container">
+            <div class="popup-content" style="max-width: 400px;">
+                <h2>Choose Your Username</h2>
+                <div style="margin: 20px 0;">
+                    <input type="text" id="modal-username" placeholder="Enter a unique username" style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: rgba(0,0,0,0.5); color: white; font-size: 16px;">
+                    <div id="username-error" style="color: #ff5555; margin-top: 10px; display: none;"></div>
+                    <div style="margin-top: 15px; color: #aaa; font-size: 14px;">
+                        <p>⚠️ Usernames must be unique and cannot be changed unless you reconnect.</p>
+                        <p>✅ Letters, numbers, and underscores only.</p>
+                    </div>
+                </div>
+                <div style="display: flex; justify-content: flex-end;">
+                    <button id="confirm-username" style="background: linear-gradient(to right, #4CAF50, #2E7D32); color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;">Join Chat</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    usernameModal = document.getElementById('username-modal');
+    
+    document.getElementById('confirm-username').addEventListener('click', setUsernameFromModal);
+    document.getElementById('modal-username').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') setUsernameFromModal();
+    });
+}
+
+function showUsernameModal() {
+    if (!usernameModal) createUsernameModal();
+    usernameModal.style.display = 'flex';
+    document.getElementById('modal-username').focus();
+    document.getElementById('modal-username').value = username || '';
+}
+
+function hideUsernameModal() {
+    if (usernameModal) {
+        usernameModal.style.display = 'none';
+    }
+}
+
+function setUsernameFromModal() {
+    const modalUsernameInput = document.getElementById('modal-username');
+    const errorDiv = document.getElementById('username-error');
+    const newUsername = modalUsernameInput.value.trim();
+    
+    if (!newUsername) {
+        errorDiv.textContent = 'Username cannot be empty.';
+        errorDiv.style.display = 'block';
+        return;
+    }
+    
+    if (newUsername.length > 20) {
+        errorDiv.textContent = 'Username must be 20 characters or less.';
+        errorDiv.style.display = 'block';
+        return;
+    }
+    
+    if (!/^[a-zA-Z0-9_]+$/.test(newUsername)) {
+        errorDiv.textContent = 'Only letters, numbers, and underscores allowed.';
+        errorDiv.style.display = 'block';
+        return;
+    }
+    
+    // Send username to server for validation
+    ws.send(JSON.stringify({
+        type: 'set-username',
+        username: newUsername
+    }));
+    
+    // Show loading state
+    errorDiv.textContent = 'Checking username availability...';
+    errorDiv.style.color = '#4CAF50';
+    errorDiv.style.display = 'block';
+}
 
 // Load messages from localStorage while waiting for server
 const storedMessages = JSON.parse(localStorage.getItem(MESSAGES_STORAGE_KEY)) || [];
@@ -71,14 +152,31 @@ if (storedMessages.length > 0) {
     setupReplyHandlers();
 }
 
-if (username) {
-    usernameInput.value = username;
-    usernameInput.disabled = true;
-    adminLoginButton.style.display = 'inline-block';
+// Update the existing username input event listener
+usernameInput.addEventListener('blur', function() {
+    const newUsername = usernameInput.value.trim();
+    if (newUsername && newUsername !== username) {
+        // If username is already set and user tries to change it, show modal
+        if (username) {
+            showNotification('Username cannot be changed. Please refresh to choose a new username.');
+            usernameInput.value = username; // Revert the change
+            return;
+        }
+        
+        // For new users, use the modal
+        usernameInput.value = '';
+        showUsernameModal();
+    }
+});
+
+// Initialize username modal on page load if no username is set
+if (!username) {
+    setTimeout(() => {
+        showUsernameModal();
+    }, 500);
 }
 
 // Event Listeners
-usernameInput.addEventListener('blur', handleUsernameBlur);
 messageInput.addEventListener('keypress', handleMessageKeyPress);
 sendButton.addEventListener('click', sendMessage);
 adminLoginButton.addEventListener('click', adminLogin);
@@ -87,17 +185,18 @@ messageInput.addEventListener('input', handleMessageInput);
 fileUploadInput.addEventListener('change', handleFileUpload);
 document.addEventListener('click', handleDocumentClick);
 
-function handleUsernameBlur() {
-    username = usernameInput.value;
-    localStorage.setItem('username', username);
-    usernameInput.disabled = true;
+// Disable direct username input
+usernameInput.disabled = true;
+usernameInput.placeholder = "Click to set username";
 
-    if (username.trim()) {
-        adminLoginButton.style.display = 'inline-block';
+// Make username input clickable to change username
+usernameInput.addEventListener('click', () => {
+    if (!username) {
+        showUsernameModal();
     } else {
-        adminLoginButton.style.display = 'none';
+        showNotification('Refresh the page to choose a new username.');
     }
-}
+});
 
 function handleMessageKeyPress(e) {
     if (e.key === 'Enter' && !suggestionsVisible) {
@@ -112,13 +211,18 @@ function handleDocumentClick(e) {
 }
 
 function handleMessageInput(e) {
-    if (!username) return;
+    if (!username) {
+        showNotification('Please set a username first.');
+        messageInput.value = '';
+        showUsernameModal();
+        return;
+    }
 
     // Typing indicator
-    ws.send(JSON.stringify({ type: 'typing', username }));
+    ws.send(JSON.stringify({ type: 'typing' }));
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => {
-        ws.send(JSON.stringify({ type: 'stop-typing', username }));
+        ws.send(JSON.stringify({ type: 'stop-typing' }));
     }, 10000);
 
     // Mention suggestions
@@ -213,11 +317,16 @@ messageInput.addEventListener('keydown', (e) => {
 });
 
 function sendMessage() {
+    if (!username) {
+        showNotification('Please set a username first.');
+        showUsernameModal();
+        return;
+    }
+    
     const message = messageInput.value.trim();
-    if (message && username) {
+    if (message) {
         const messageData = {
             type: 'user',
-            username: username,
             message: message
         };
 
@@ -229,7 +338,7 @@ function sendMessage() {
 
         ws.send(JSON.stringify(messageData));
         messageInput.value = '';
-        ws.send(JSON.stringify({ type: 'stop-typing', username }));
+        ws.send(JSON.stringify({ type: 'stop-typing' }));
         hideSuggestions();
         cancelReply();
     }
@@ -247,6 +356,7 @@ function handleFileUpload(e) {
 
     if (!username) {
         showNotification('Please set a username before sending files');
+        showUsernameModal();
         return;
     }
 
@@ -261,7 +371,7 @@ function handleFileUpload(e) {
     
     // Show upload in progress
     const tempMessage = document.createElement('div');
-    tempMessage.className = username ? 'message-self' : 'message-other';
+    tempMessage.className = 'message-self';
     tempMessage.innerHTML = `
         <strong>${username}</strong>: Uploading ${file.name}...
         ${progressContainer.outerHTML}
@@ -281,14 +391,12 @@ function handleFileUpload(e) {
         // Prepare the message data
         const messageData = {
             type: 'file',
-            username: username,
             fileId: fileId,
             fileName: file.name,
             fileType: file.type,
             fileSize: file.size,
-            fileData: fileData.split(',')[1], // Remove the data URL prefix
-            fileCategory: fileType,
-            isAdmin: false
+            fileData: fileData.split(',')[1],
+            fileCategory: fileType
         };
 
         if (replyingTo) {
@@ -370,6 +478,14 @@ function formatBytes(bytes, decimals = 2) {
 }
 
 function formatMessage(msg) {
+    // Special styling for system messages (they don't have usernames)
+    if (msg.type === 'system') {
+        return `<div class="message-system" id="msg-${msg.id}">
+            <em>📢 ${msg.message}</em>
+        </div>`;
+    }
+    
+    // Regular user messages
     const isCurrentUser = msg.username === username;
     let messageClass = isCurrentUser ? 'message-self' : 'message-other';
     
@@ -424,13 +540,14 @@ function formatMessage(msg) {
         messageContent += ` ${formattedMessage}`;
     }
 
-    // Add reply button
-    if (!isCurrentUser) {
+    // Only add reply button to non-system messages that are not from current user
+    if (msg.type !== 'system' && !isCurrentUser) {
         messageContent += ` <button class="reply-button" style="background: none; border: none; color: #4CAF50; cursor: pointer;">↩️</button>`;
     }
 
-    if (isAdmin || msg.type === 'user' || msg.type === 'file') {
-        messageContent += ` <span class="delete-message" onclick="deleteMessage('${msg.id}')" style="display: ${isAdmin ? 'inline' : 'none'}">Delete</span>`;
+    // Only add delete button for admin on non-system messages
+    if (isAdmin && msg.type !== 'system') {
+        messageContent += ` <span class="delete-message" onclick="deleteMessage('${msg.id}')">Delete</span>`;
     }
 
     messageContent += `</div>`;
@@ -439,12 +556,16 @@ function formatMessage(msg) {
 }
 
 function setupReplyHandlers() {
+    // Only attach reply handlers to non-system messages
     document.querySelectorAll('.reply-button').forEach(button => {
         button.addEventListener('click', (e) => {
-            const messageId = e.target.closest('.message-other, .message-self').id.replace('msg-', '');
-            const message = messages.find(m => m.id == messageId);
-            if (message) {
-                setReply(message);
+            const messageElement = e.target.closest('.message-other, .message-self');
+            if (messageElement) {
+                const messageId = messageElement.id.replace('msg-', '');
+                const message = messages.find(m => m.id == messageId);
+                if (message) {
+                    setReply(message);
+                }
             }
         });
     });
@@ -468,6 +589,12 @@ function cancelReply() {
 }
 
 function adminLogin() {
+    if (!username) {
+        showNotification('Please set a username first.');
+        showUsernameModal();
+        return;
+    }
+    
     const password = prompt('Enter admin password:');
     ws.send(JSON.stringify({
         type: 'admin-login',
@@ -531,6 +658,25 @@ ws.onmessage = (event) => {
         output.innerHTML = messages.map(msg => formatMessage(msg)).join('');
         chatWindow.scrollTop = chatWindow.scrollHeight;
         setupReplyHandlers();
+    } else if (data.type === 'username-set') {
+        username = data.username;
+        localStorage.setItem('username', username);
+        usernameInput.value = username;
+        adminLoginButton.style.display = 'inline-block';
+        hideUsernameModal();
+        showNotification(`Welcome, ${username}!`);
+    } else if (data.type === 'username-taken') {
+        const errorDiv = document.getElementById('username-error');
+        errorDiv.textContent = data.message;
+        errorDiv.style.color = '#ff5555';
+        errorDiv.style.display = 'block';
+        document.getElementById('modal-username').focus();
+    } else if (data.type === 'username-invalid') {
+        const errorDiv = document.getElementById('username-error');
+        errorDiv.textContent = data.message;
+        errorDiv.style.color = '#ff5555';
+        errorDiv.style.display = 'block';
+        document.getElementById('modal-username').focus();
     } else if (data.type === 'user' || data.type === 'file' || data.type === 'system') {
         feedback.innerHTML = '';
         messages.push(data);
@@ -542,11 +688,13 @@ ws.onmessage = (event) => {
         
         output.innerHTML += formatMessage(data);
         chatWindow.scrollTop = chatWindow.scrollHeight;
-        setupReplyHandlers();
-
-        if (data.message && data.message.includes(`@${username}`)) {
-            showNotification(`You were mentioned by ${data.username}`);
+        
+        // Only setup reply handlers for non-system messages
+        if (data.type !== 'system') {
+            setupReplyHandlers();
         }
+
+        // REMOVED the client-side mention check - server handles it now
     } else if (data.type === 'delete-message') {
         const deletedMessage = document.getElementById(`msg-${data.messageId}`);
         if (deletedMessage) {
@@ -577,6 +725,22 @@ ws.onmessage = (event) => {
         }
     } else if (data.type === 'online-users') {
         onlineUsersList = data.users.filter(user => user !== username);
+    } else if (data.type === 'error') {
+        showNotification(data.message);
+    } else if (data.type === 'mention') {
+        // This is now the ONLY place where mention notifications are shown
+        showNotification(`You were mentioned by ${data.from}: "${data.message}"`);
+    }
+};
+
+ws.onopen = () => {
+    console.log('Connected to server');
+    // If we already have a username from localStorage, try to set it
+    if (username) {
+        ws.send(JSON.stringify({
+            type: 'set-username',
+            username: username
+        }));
     }
 };
 
@@ -588,5 +752,7 @@ ws.onerror = (error) => {
 ws.onclose = () => {
     console.log('WebSocket connection closed');
     showNotification('Connection lost. Attempting to reconnect...');
+    // Clear username from localStorage on disconnect
+    localStorage.removeItem('username');
     setTimeout(() => window.location.reload(), 5000);
 };
