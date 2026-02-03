@@ -13,6 +13,9 @@ let messages = [];
 let messageIdCounter = 0;
 let onlineUsers = [];
 
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
 // Store usernames that are currently in use
 let activeUsernames = new Set();
 
@@ -330,5 +333,6 @@ wss.on('connection', (ws) => {
 
 // Send online users list every 5 seconds
 setInterval(broadcastOnlineUsers, 5000);
+
 
 server.listen(3000, () => console.log('Server running on port 3000'));
